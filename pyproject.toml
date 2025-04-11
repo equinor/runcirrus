@@ -1,0 +1,19 @@
+[project]
+name = "runcirrus"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Lars Petter Hauge", email = "lpha@equinor.com" },
+    { name = "Zohar Malamant", email = "ZOM@equinor.com"},
+    {name = "CCS Data Digital", email = "fg_CCS_Data_Digital@equinor.com"}
+]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+runcirrus = "runcirrus.runcirrus:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
