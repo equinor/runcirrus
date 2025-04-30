@@ -44,6 +44,7 @@ import shutil
 import shlex
 import re
 import socket
+import subprocess
 from pathlib import Path
 from dataclasses import dataclass
 from runcirrus.logger import logger
@@ -242,7 +243,8 @@ def parse_args(argv: list[str]) -> Arguments:
 
 def run(program: str, *args: str) -> NoReturn:
     print(f"{program} {shlex.join(args[:-1])} <SCRIPT>")
-    os.execvp(program, [program, *args])
+    status = subprocess.run([program, *args])
+    sys.exit(status.returncode)
 
 
 def run_local(script: str, args: Arguments) -> NoReturn:
