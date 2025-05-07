@@ -43,18 +43,10 @@ import argparse
 import shutil
 import shlex
 import re
-import socket
 import subprocess
 from pathlib import Path
 from dataclasses import dataclass
 from runcirrus.logger import logger
-
-
-def anonymize_fqdn(fqdn: str) -> str:
-    """Anonymize fully-qualified domain name"""
-
-    index = fqdn.find(".")
-    return "" if index < 0 else fqdn[index:]
 
 
 SCRIPT = """\
@@ -385,16 +377,16 @@ def main() -> None:
     logger.info(
         "Start job",
         extra={
-            "type": "runcirrus",
-            "script": sys.argv[0],
-            "version": str(args.version),
-            "num_tasks_per_machine": args.num_tasks_per_machine,
-            "num_machines": args.num_machines,
+            "arg0": sys.argv[0],
+            "args.version": str(args.version),
+            "args.num_tasks_per_machine": args.num_tasks_per_machine,
+            "args.num_machines": args.num_machines,
+            "args.queue": args.queue,
+            "version": version,
+            "rootdir": str(rootdir),
             "num_tasks": num_tasks,
-            "queue": args.queue,
             "bsub": HAVE_BSUB,
             "qsub": HAVE_QSUB,
-            "hostname": anonymize_fqdn(socket.getfqdn()),
         },
     )
 
