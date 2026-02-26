@@ -102,6 +102,16 @@ def ensure_local_on_hpc(args: Arguments) -> None:
         args.num_tasks_per_machine = args.num_tasks_per_machine or 1
 
 
+def get_max_allowed_cpu() -> int:
+    for env in ("LSB_DJOB_RANKFILE", "PBS_NODEFILE"):
+        if (file_ := os.environ.get(env)) is None:
+            continue
+
+        return len(Path(file_).read_text().splitlines())
+
+    return os.cpu_count() or 1
+
+
 def get_versions_path() -> Path:
     """Get directory path of install cirrus versions
 
@@ -333,7 +343,7 @@ def main() -> None:
             sys.exit(
                 "Must specify -n/--num-tasks-per-machine when running on a non-local queue"
             )
-        args.num_tasks_per_machine = os.cpu_count() or 1
+        args.num_tasks_per_machine = get_max_allowed_cpu()
     if args.num_machines > 1 and args.queue == "local":
         sys.exit(
             "Must specify -q/--queue when attempting to run on multiple machines with -m/--num-machines"

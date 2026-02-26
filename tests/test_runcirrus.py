@@ -1,7 +1,9 @@
 import os
+import sys
 
 import pytest
 from runcirrus import runcirrus
+from pathlib import Path
 
 
 def test_printversions_empty_folder(capsys, tmp_path, monkeypatch):
@@ -90,3 +92,34 @@ def test_get_versions_path_correctly_fails(capsys, monkeypatch):
         runcirrus.parse_args(["0", "--print-versions"])
 
     assert err.match("Not able to locate install location from /some/example/path")
+
+
+def test_get_max_allowed_cpu_with_no_hostfile_defined(monkeypatch):
+    monkeypatch.setattr(os, "cpu_count", lambda: 1337)
+
+    assert runcirrus.get_max_allowed_cpu() == 1337
+
+
+@pytest.mark.parametrize("name,num_cpus", [("LSB_DJOB_RANKFILE", 2), ("LSB_DJOB_RANKFILE", 4), ("PBS_NODEFILE", 8)])
+def test_get_max_allowed_cpu(tmp_path, monkeypatch, name, num_cpus):
+    hostfile_path = tmp_path / "hostfile"
+    hostfile_path.write_text("host0\n" * num_cpus)
+    monkeypatch.setenv(name, str(hostfile_path))
+
+    assert runcirrus.get_max_allowed_cpu() == num_cpus
+
+
+def test_num_cpu_precedence_correct_nei_jeg_vet_ikke(tmp_path, mocker, monkeypatch):
+    run_local = mocker.Mock()
+    monkeypatch.setattr(runcirrus, "run_local", run_local)
+    monkeypatch.setattr(runcirrus, "get_versions_path", lambda: Path("/"))
+
+    hostfile_path = tmp_path / "hostfile"
+    hostfile_path.write_text("host0" * 7)
+    monkeypatch.setenv("LSB_DJOB_RANKFILE", str(hostfile_path))
+
+    monkeypatch.setattr(sys, "argv", ["arg0", "--version", "dev", "-n", "13", "/dev/null"])
+
+    runcirrus.main()
+
+    assert run_local.call_args[0][1].num_tasks_per_machine == 13
