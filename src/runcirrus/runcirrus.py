@@ -102,12 +102,13 @@ def ensure_local_on_hpc(args: Arguments) -> None:
         args.num_tasks_per_machine = args.num_tasks_per_machine or 1
 
 
-def get_max_allowed_cpu() -> int:
+def get_max_allowed_cpu(requested: int | None = None) -> int:
     for env in ("LSB_DJOB_RANKFILE", "PBS_NODEFILE"):
         if (file_ := os.environ.get(env)) is None:
             continue
 
-        return len(Path(file_).read_text().splitlines())
+        hostfile_max = len(Path(file_).read_text().splitlines())
+        return min(hostfile_max, requested or hostfile_max)
 
     return os.cpu_count() or 1
 
@@ -343,7 +344,9 @@ def main() -> None:
             sys.exit(
                 "Must specify -n/--num-tasks-per-machine when running on a non-local queue"
             )
-        args.num_tasks_per_machine = get_max_allowed_cpu()
+        args.num_tasks_per_machine = get_max_allowed_cpu() or 1
+    else:
+        args.num_tasks_per_machine = get_max_allowed_cpu(args.num_tasks_per_machine)
     if args.num_machines > 1 and args.queue == "local":
         sys.exit(
             "Must specify -q/--queue when attempting to run on multiple machines with -m/--num-machines"
