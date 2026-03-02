@@ -350,7 +350,9 @@ def main() -> None:
         sys.exit(
             "Must specify -n/--num-tasks-per-machine when running on a non-local queue"
         )
-    args.num_tasks_per_machine = get_max_allowed_cpu(args.num_tasks_per_machine)
+
+    if args.queue == "local":
+        args.num_tasks_per_machine = get_max_allowed_cpu(args.num_tasks_per_machine)
 
     if args.num_machines > 1 and args.queue == "local":
         sys.exit(
