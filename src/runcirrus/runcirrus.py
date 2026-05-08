@@ -37,12 +37,11 @@ processes per machine for a total of 16 cores, use:
 
 from __future__ import annotations
 import sys
-from typing import Any, NoReturn
+from typing import NoReturn, Any
 import os
 import argparse
 import shutil
 import shlex
-import re
 import subprocess
 from pathlib import Path
 from dataclasses import dataclass
@@ -70,24 +69,12 @@ then
     arg_mpi_transport="-mca btl vader,self,tcp -mca pml ^ucx"
 fi
 
-({root}/bin/mpirun $arg_mpi_transport $arg_machinefile {num_tasks} {mpi_args} {telemetry} {root}/bin/{progname} {cirrus_args} -{progname}in "{input_file}" -output_prefix "{outdir}/{case}" | tee "{outdir}/{case}.LOG") 3>&1 1>&2 2>&3 | tee "{outdir}/{case}.ERR"
+({root}/bin/mpirun $arg_mpi_transport $arg_machinefile {num_tasks} {mpi_args} {telemetry} {root}/bin/cirrus {cirrus_args} -cirrusin "{input_file}" -output_prefix "{outdir}/{case}" | tee "{outdir}/{case}.LOG") 3>&1 1>&2 2>&3 | tee "{outdir}/{case}.ERR"
 """
 
 
 HAVE_BSUB = shutil.which("bsub") is not None  # IBM LSF
 HAVE_QSUB = shutil.which("qsub") is not None  # OpenPBS
-
-
-def default_version(script_name: str) -> str:
-    """Determine the default version from script name"""
-    p = re.compile(r"^run(cirrus|pflotran)(\d+(?:\.\d+)*)?")
-    if (m := p.match(script_name)) is None:
-        return "stable"
-    if v := m.group(2):
-        return v
-    if m.group(1) == "pflotran":
-        return "1.8"
-    return "stable"
 
 
 def ensure_local_on_hpc(args: Arguments) -> None:
@@ -120,46 +107,29 @@ def get_max_allowed_cpu(requested: int | None = None) -> int:
     return min(machine_max, requested or machine_max)
 
 
-def get_versions_path() -> Path:
-    """Get directory path of install cirrus versions
-
-    Use CIRRUS_VERSIONS_PATH environment variable to determine where we are, or
-    if unset, use "versions" directory next to the location of this script.
-
-    """
-    if (path := os.environ.get("CIRRUS_VERSIONS_PATH")) is not None:
+def get_install_path() -> Path:
+    if (path := os.environ.get("CIRRUS_INSTALL_PATH")) is not None:
         return Path(path).expanduser()
 
-    search_path = Path(os.path.dirname(__file__)).resolve()
+    from runcirrus.configure import read_config
 
-    while search_path.name != "versions":
-        search_path = search_path.parent
+    config = read_config()
+    if configured_path := config.get("cirrus-install-path"):
+        return Path(configured_path).expanduser()
 
-        if search_path.parent == search_path:
-            # Hit root
-            raise RuntimeError(
-                f"Not able to locate install location from {Path(os.path.dirname(__file__))}"
-            )
-
-    return search_path
+    sys.exit(
+        "Cirrus install path not configured. Run:\n"
+        "  runcirrus-configure --cirrus-install-path /path/to/cirrus/\n"
+        "or set the CIRRUS_INSTALL_PATH environment variable."
+    )
 
 
 class PrintVersionAction(argparse.Action):
     def __call__(self, *_args: Any) -> None:
-        possible_versions = []
-
-        for fpath in os.listdir(get_versions_path()):
-            if fpath.startswith("."):
-                continue
-
-            possible_versions.append(fpath)
-
-        if not possible_versions:
-            print(f"No installed versions found at {get_versions_path()}")
-        else:
-            print("\n".join(possible_versions))
-
-        sys.exit()
+        install_path = get_install_path()
+        sys.exit(
+            subprocess.call([str(install_path / "bin" / "cirrus"), "--print-versions"])
+        )
 
 
 @dataclass
@@ -337,6 +307,7 @@ def main() -> None:
             argv.append(arg)
 
     args = parse_args(argv)
+
     input_file = Path(args.input).expanduser().resolve()
     if not input_file.exists():
         sys.exit(f"Cirrus input file '{input_file}' does not exit!")
@@ -359,20 +330,13 @@ def main() -> None:
             "Must specify -q/--queue when attempting to run on multiple machines with -m/--num-machines"
         )
 
-    version = default_version(os.path.basename(sys.argv[0]))
+    cirrus_args = args.cirrus_args or ""
     if args.version:
-        version = args.version
+        cirrus_args = "-v " + args.version + " " + cirrus_args
 
-    for versions_path in get_versions_path(), Path("/prog/cirrus/versions"):
-        rootdir = (versions_path / version).resolve()
-        if rootdir.exists():
-            break
-    else:
-        sys.exit(f"Cirrus version '{version}' is not installed in {versions_path}")
+    install_path = get_install_path()
 
     progname = "cirrus"
-    if version and version.split(".") < ["1", "9"]:
-        progname = "pflotran"
 
     num_tasks = args.num_machines * args.num_tasks_per_machine
 
@@ -382,13 +346,13 @@ def main() -> None:
         outdir = Path(args.input).expanduser().parent
 
     script = SCRIPT.format(
-        root=rootdir,
+        root=install_path,
         workdir=input_file.parent,
         input_file=input_file,
         case=input_file.stem,
         progname=progname,
         mpi_args=args.mpi_args or "",
-        cirrus_args=args.cirrus_args or "",
+        cirrus_args=cirrus_args,
         num_tasks=f"-np {num_tasks}" if num_tasks is not None else "",
         outdir=outdir.resolve(),
         telemetry=args.telemetry,
@@ -402,8 +366,7 @@ def main() -> None:
             "args.num_tasks_per_machine": args.num_tasks_per_machine,
             "args.num_machines": args.num_machines,
             "args.queue": args.queue,
-            "version": version,
-            "rootdir": str(rootdir),
+            "rootdir": str(install_path),
             "num_tasks": num_tasks,
             "bsub": HAVE_BSUB,
             "qsub": HAVE_QSUB,
