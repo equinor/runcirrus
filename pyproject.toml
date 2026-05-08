@@ -18,6 +18,8 @@ runcirrus = "runcirrus.runcirrus:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.hooks.custom]
+
 [dependency-groups]
 dev = [
     "mypy>=1.15.0",

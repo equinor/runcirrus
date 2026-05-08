@@ -121,27 +121,22 @@ def get_max_allowed_cpu(requested: int | None = None) -> int:
 
 
 def get_versions_path() -> Path:
-    """Get directory path of install cirrus versions
-
-    Use CIRRUS_VERSIONS_PATH environment variable to determine where we are, or
-    if unset, use "versions" directory next to the location of this script.
-
-    """
     if (path := os.environ.get("CIRRUS_VERSIONS_PATH")) is not None:
         return Path(path).expanduser()
 
-    search_path = Path(os.path.dirname(__file__)).resolve()
+    try:
+        from runcirrus._config import CIRRUS_VERSIONS_PATH as _configured_path
+    except ImportError:
+        _configured_path = ""
 
-    while search_path.name != "versions":
-        search_path = search_path.parent
+    if _configured_path:
+        return Path(_configured_path).expanduser()
 
-        if search_path.parent == search_path:
-            # Hit root
-            raise RuntimeError(
-                f"Not able to locate install location from {Path(os.path.dirname(__file__))}"
-            )
-
-    return search_path
+    sys.exit(
+        "Cirrus versions path not configured. "
+        "Set CIRRUS_VERSIONS_PATH environment variable or reinstall with: "
+        "CIRRUS_VERSIONS_PATH=/path/to/versions pip install runcirrus"
+    )
 
 
 class PrintVersionAction(argparse.Action):
@@ -363,11 +358,9 @@ def main() -> None:
     if args.version:
         version = args.version
 
-    for versions_path in get_versions_path(), Path("/prog/cirrus/versions"):
-        rootdir = (versions_path / version).resolve()
-        if rootdir.exists():
-            break
-    else:
+    versions_path = get_versions_path()
+    rootdir = (versions_path / version).resolve()
+    if not rootdir.exists():
         sys.exit(f"Cirrus version '{version}' is not installed in {versions_path}")
 
     progname = "cirrus"

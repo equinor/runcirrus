@@ -41,57 +41,33 @@ def test_default_version(script_name, expect):
     assert runcirrus.default_version(script_name) == expect, f"{script_name=}"
 
 
-@pytest.mark.parametrize(
-    "dir,expected_out",
-    [
-        (
-            "cirrus/versions/.store/d312321-runcirrus-1.0.0/bin/runcirrus",
-            "cirrus/versions",
-        ),
-        ("cirrus/versions/.store/further_up", "cirrus/versions"),
-    ],
-)
-def test_get_versions_path_correctly_identifies_location(
-    dir, expected_out, monkeypatch
-):
-    def mockreturn(_):
-        return dir
-
-    monkeypatch.setattr(os.path, "dirname", mockreturn)
-
-    assert str(runcirrus.get_versions_path()).endswith(expected_out)
+def test_get_versions_path_from_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("CIRRUS_VERSIONS_PATH", str(tmp_path))
+    assert runcirrus.get_versions_path() == tmp_path
 
 
-def test_get_versions_path_correctly_identifies_symlinked_location(
-    tmp_path, monkeypatch
-):
-    script_path = (
-        tmp_path / "cirrus/versions/.store/d312321-runcirrus-1.0.0/bin/runcirrus"
-    )
-    script_path.mkdir(parents=True)
-
-    destination = tmp_path / "bin/runcirrus"
-    destination.parent.mkdir()
-    os.symlink(script_path, destination)
-
-    def mockreturn(_):
-        return destination
-
-    monkeypatch.setattr(os.path, "dirname", mockreturn)
-    assert str(runcirrus.get_versions_path()).endswith("")
+def test_get_versions_path_from_config(monkeypatch, tmp_path):
+    monkeypatch.delenv("CIRRUS_VERSIONS_PATH", raising=False)
+    import runcirrus._config as _config
+    monkeypatch.setattr(_config, "CIRRUS_VERSIONS_PATH", str(tmp_path))
+    assert runcirrus.get_versions_path() == tmp_path
 
 
-def test_get_versions_path_correctly_fails(capsys, monkeypatch):
-    def mockreturn(_):
-        # the important thing is that "versions" does not exist in path
-        return "/some/example/path"
+def test_get_versions_path_env_overrides_config(monkeypatch, tmp_path):
+    env_path = tmp_path / "from_env"
+    env_path.mkdir()
+    monkeypatch.setenv("CIRRUS_VERSIONS_PATH", str(env_path))
+    import runcirrus._config as _config
+    monkeypatch.setattr(_config, "CIRRUS_VERSIONS_PATH", str(tmp_path))
+    assert runcirrus.get_versions_path() == env_path
 
-    monkeypatch.setattr(os.path, "dirname", mockreturn)
 
-    with pytest.raises(RuntimeError) as err:
-        runcirrus.parse_args(["0", "--print-versions"])
-
-    assert err.match("Not able to locate install location from /some/example/path")
+def test_get_versions_path_exits_when_not_configured(monkeypatch):
+    monkeypatch.delenv("CIRRUS_VERSIONS_PATH", raising=False)
+    import runcirrus._config as _config
+    monkeypatch.setattr(_config, "CIRRUS_VERSIONS_PATH", "")
+    with pytest.raises(SystemExit):
+        runcirrus.get_versions_path()
 
 
 def test_get_max_allowed_cpu_with_no_hostfile_defined(monkeypatch):
