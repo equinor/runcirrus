@@ -13,6 +13,7 @@ dependencies = []
 
 [project.scripts]
 runcirrus = "runcirrus.runcirrus:main"
+runcirrus-configure = "runcirrus.configure:main"
 
 [build-system]
 requires = ["hatchling"]
