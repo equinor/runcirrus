@@ -1,40 +1,34 @@
-# runcirrus
+# runscript
 
-This is the script that we use to run OpenGoSim's Cirrus reservoir simulator. It does the following things:
-- Run cirrus locally, and on the cluster. LSF and OpenPBS are supported for now.
-- Can run any version of Cirrus that we have deployed.
+Generic MPI job wrapper for running programs on HPC clusters. Supports local execution, IBM LSF, and OpenPBS.
+
+## Setup
+
+Register a program with its paths:
+
+    $ runscript-configure --progname myprog --executable-path /path/to/myprog --mpirun-path /path/to/mpirun
+
+This creates a `runmyprog` wrapper script alongside `runscript-configure`.
+
+Optional flags:
+- `--display-name` — human-readable name (defaults to progname)
+- `--launch-template` — custom launch command template
+- `--pre-command` — command to run before the main launch
 
 ## Using
-This script operates on Cirrus .in files and enables you to simulate in
-parallel. For example, given the "spe1.in" case, you can simply run it with the
-following command:
 
-    $ runcirrus spe1.in
+Run a registered program against an input file:
 
-This will use all available cores on your local machine, and output the
-following files:
+    $ runmyprog spe1.in
 
-    'spe1.out': Text summarising the simulation
-    'spe1-mas.dat':
-    'spe1.INIT':
-    'spe1.SMSPEC':
-    'spe1.UNSMRY':
+This uses all available cores on the local machine. Output files:
 
-Additionally, runcirrus produces the following files:
+    spe1.LOG: program stdout
+    spe1.ERR: program stderr
 
-    'spe1.LOG': Cirrus' "stdout" standard output
-    'spe1.ERR': Cirrus' "stderr" standard error
-    'spe1_bsub.LOG': Logs from the workflow manager when using IBM LSF
+To submit to the HPC cluster, specify `-q` (`--queue`). Use `-n` (tasks per machine) and `-m` (number of machines) to control parallelism:
 
-To utilise the HPC cluster, specify '-q' (aka. '--queue'). In this
-configuration, only 1 CPU will be utilised by default. To change this behaviour,
-use the '-n' and '-m' options. '-n' is "number of tasks per machine" and '-m' is
-"number of machines".
-
-For example, to add a job to the 'bigmem' queue using 2 machines (nodes) and 8
-processes per machine for a total of 16 cores, use:
-
-    $ runcirrus -q bigmem -n 8 -m 2 spe1.in
+    $ runmyprog -q bigmem -n 8 -m 2 spe1.in
 
 ## Building
 This project uses Python with [uv](https://docs.astral.sh/uv/).

@@ -1,7 +1,7 @@
 [project]
-name = "runcirrus"
+name = "runscript"
 version = "0.1.0"
-description = "Add your description here"
+description = "Generic MPI job wrapper for HPC clusters"
 readme = "README.md"
 authors = [
     { name = "Lars Petter Hauge", email = "lpha@equinor.com" },
@@ -12,8 +12,8 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
-runcirrus = "runcirrus.runcirrus:main"
-runcirrus-configure = "runcirrus.configure:main"
+runscript-configure = "runscript.configure:main"
+runscript = "runscript.runner:main"
 
 [build-system]
 requires = ["hatchling"]
