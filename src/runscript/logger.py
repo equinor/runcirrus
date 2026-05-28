@@ -10,6 +10,6 @@ libraries.
 
 import logging
 
-logger = logging.getLogger("runcirrus")
+logger = logging.getLogger("runscript")
 
 __all__ = ["logger"]

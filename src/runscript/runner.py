@@ -1,40 +1,3 @@
-#!/usr/bin/python3.11
-"""Wrapper for running Cirrus with MPI in Equinor.
-
-
-This script operates on Cirrus .in files and enables you to simulate in
-parallell. For example, given the "spe1.in" case, you can simply run it with the
-following command:
-
-    $ runcirrus spe1.in
-
-This will use all available cores on your local machine, and output the
-following files:
-
-    'spe1.out': Text summarising the simulation
-    'spe1-mas.dat':
-    'spe1.INIT':
-    'spe1.SMSPEC':
-    'spe1.UNSMRY':
-
-Additionally, runcirrus produces the following files:
-
-    'spe1.LOG': Cirrus' "stdout" standard output
-    'spe1.ERR': Cirrus' "stderr" standard error
-    'spe1_bsub.LOG': Logs from the workflow manager when using IBM LSF
-
-To utilise the HPC cluster, specify '-q' (aka. '--queue'). In this
-configuration, only 1 CPU will be utilised by default. To change this behaviour,
-use the '-n' and '-m' options. '-n' is "number of tasks per machine" and '-m' is
-"number of machines".
-
-For example, to add a job to the 'bigmem' queue using 2 machines (nodes) and 8
-processes per machine for a total of 16 cores, use:
-
-    $ runcirrus -q bigmem -n 8 -m 2 spe1.in
-
-"""
-
 from __future__ import annotations
 import sys
 from typing import NoReturn, Any
@@ -45,15 +8,18 @@ import shlex
 import subprocess
 from pathlib import Path
 from dataclasses import dataclass
-from runcirrus.logger import logger
+from runscript.logger import logger
+from runscript.configure import read_config, ProgramConfig
 
-
-SCRIPT = """\
+_SCRIPT_HEADER = """\
 #!/usr/bin/bash
 set -e -o pipefail
 
 cd "{outdir}"
 
+"""
+
+_SCRIPT_MPI_SETUP = """\
 arg_mpi_transport=
 arg_machinefile=
 
@@ -64,24 +30,42 @@ elif [ -n "$PBS_NODEFILE" ]; then  # PBS
 fi
 
 # Check for possibly non-working RDMA transport
-if lsmod | egrep -qw bnxt_re
+if command -v lsmod >/dev/null 2>&1 && lsmod | egrep -qw bnxt_re
 then
     arg_mpi_transport="-mca btl vader,self,tcp -mca pml ^ucx"
 fi
 
-({root}/bin/mpirun $arg_mpi_transport $arg_machinefile {num_tasks} {mpi_args} {telemetry} {root}/bin/cirrus {cirrus_args} -cirrusin "{input_file}" -output_prefix "{outdir}/{case}" | tee "{outdir}/{case}.LOG") 3>&1 1>&2 2>&3 | tee "{outdir}/{case}.ERR"
 """
+
+_DEFAULT_LAUNCH_COMMAND = "{executable} {program_args}"
+
+_SCRIPT_LAUNCH_MPI = (
+    "{mpirun} $arg_mpi_transport $arg_machinefile {num_tasks} {mpi_args} {telemetry}"
+    ' {launch_command} 1> >(tee "{outdir}/{case}.LOG")'
+    ' 2> >(tee "{outdir}/{case}.ERR" 1>&2)\n'
+)
+
+_SCRIPT_LAUNCH_SERIAL = (
+    '{telemetry} {launch_command} 1> >(tee "{outdir}/{case}.LOG")'
+    ' 2> >(tee "{outdir}/{case}.ERR" 1>&2)\n'
+)
 
 
 HAVE_BSUB = shutil.which("bsub") is not None  # IBM LSF
 HAVE_QSUB = shutil.which("qsub") is not None  # OpenPBS
 
 
+CONFIG: ProgramConfig | None = None
+
+
+def get_config() -> ProgramConfig:
+    global CONFIG
+    if CONFIG is None:
+        CONFIG = read_config()
+    return CONFIG
+
+
 def ensure_local_on_hpc(args: Arguments) -> None:
-    """
-    If we're running on the cluster alrea, override queue to local and set
-    num tasks to 1.
-    """
     if args.queue != "local" and any(
         x in os.environ for x in ("LSB_DJOB_RANKFILE", "PBS_NODEFILE")
     ):
@@ -90,12 +74,6 @@ def ensure_local_on_hpc(args: Arguments) -> None:
 
 
 def get_max_allowed_cpu(requested: int | None = None) -> int:
-    """Determine maximum CPUs available, constrained by environment.
-
-    Precedence: 1) cluster allocation (LSB/PBS) 2) machine CPUs 3) requested value.
-    If requested exists, return minimum of its value and any other limits.
-    Requested can only reduce other limits, never increase them.
-    """
     for env in ("LSB_DJOB_RANKFILE", "PBS_NODEFILE"):
         if (file_ := os.environ.get(env)) is None:
             continue
@@ -107,29 +85,14 @@ def get_max_allowed_cpu(requested: int | None = None) -> int:
     return min(machine_max, requested or machine_max)
 
 
-def get_install_path() -> Path:
-    if (path := os.environ.get("CIRRUS_INSTALL_PATH")) is not None:
-        return Path(path).expanduser()
+def make_print_version_action() -> type:
+    class PrintVersionAction(argparse.Action):
+        def __call__(self, *_args: Any) -> None:
+            sys.exit(
+                subprocess.call([get_config().executable_path, "--print-versions"])
+            )
 
-    from runcirrus.configure import read_config
-
-    config = read_config()
-    if configured_path := config.get("cirrus-install-path"):
-        return Path(configured_path).expanduser()
-
-    sys.exit(
-        "Cirrus install path not configured. Run:\n"
-        "  runcirrus-configure --cirrus-install-path /path/to/cirrus/\n"
-        "or set the CIRRUS_INSTALL_PATH environment variable."
-    )
-
-
-class PrintVersionAction(argparse.Action):
-    def __call__(self, *_args: Any) -> None:
-        install_path = get_install_path()
-        sys.exit(
-            subprocess.call([str(install_path / "bin" / "cirrus"), "--print-versions"])
-        )
+    return PrintVersionAction
 
 
 @dataclass
@@ -142,7 +105,7 @@ class Arguments:
     print_job_script: bool
     print_versions: bool
     mpi_args: str
-    cirrus_args: str
+    program_args: str
     output_directory: str | None
     interactive: bool
 
@@ -154,11 +117,10 @@ class Arguments:
 
 def parse_args(argv: list[str]) -> Arguments:
     ap = argparse.ArgumentParser(
-        prog="runcirrus",
+        prog=f"run{get_config().progname}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
     )
-    ap.add_argument("input", help="Cirrus .in input file")
+    ap.add_argument("input", help=f"{get_config().display_name} .in input file")
     ap.add_argument(
         "-q", "--queue", default="local", help="Job queue, or 'local' to run locally"
     )
@@ -179,7 +141,7 @@ def parse_args(argv: list[str]) -> Arguments:
     ap.add_argument(
         "-v",
         "--version",
-        help="Version of Cirrus to use",
+        help=f"Version of {get_config().display_name} to use",
     )
     ap.add_argument(
         "-o",
@@ -187,8 +149,9 @@ def parse_args(argv: list[str]) -> Arguments:
         help="Directory to store the output to",
     )
     ap.add_argument(
-        "--cirrus-args",
-        help="Additional arguments for Cirrus",
+        f"--{get_config().progname}-args",
+        dest="program_args",
+        help=f"Additional arguments for {get_config().display_name}",
     )
     ap.add_argument(
         "--mpi-args",
@@ -198,7 +161,7 @@ def parse_args(argv: list[str]) -> Arguments:
         "--telemetry",
         type=str,
         default="",
-        help="Program to run between mpirun and Cirrus",
+        help=f"Program to run between mpirun and {get_config().display_name}",
     )
     if HAVE_BSUB:
         ap.add_argument("--bsub-args", help="Additional arguments for bsub command")
@@ -214,9 +177,9 @@ def parse_args(argv: list[str]) -> Arguments:
     )
     ap.add_argument(
         "--print-versions",
-        action=PrintVersionAction,
+        action=make_print_version_action(),
         nargs=0,
-        help="Output Cirrus versions and exit",
+        help=f"Output {get_config().display_name} versions and exit",
     )
     return Arguments(**vars(ap.parse_args(argv[1:])))
 
@@ -240,7 +203,6 @@ def run_bsub(script: str, args: Arguments, input_file: Path) -> NoReturn:
 
     resources = ["select[rhel >= 8]", "same[type:model]"]
     resources.append(f"span[ptile={args.num_tasks_per_machine}]")
-    resource_string = " ".join(resources)
 
     user_args = shlex.split(args.bsub_args or "")
 
@@ -256,9 +218,9 @@ def run_bsub(script: str, args: Arguments, input_file: Path) -> NoReturn:
         "-o",
         f"{input_file.parent}/{input_file.stem}_bsub.LOG",
         "-J",
-        f"Cirrus_{input_file.name}",
+        f"{get_config().progname}_{input_file.name}",
         "-R",
-        resource_string,
+        " ".join(resources),
         *user_args,
         "--",
         "bash",
@@ -287,7 +249,7 @@ def run_qsub(script: str, args: Arguments, input_file: Path) -> NoReturn:
         "-o",
         f"{input_file.parent}/{input_file.stem}_qsub.LOG",
         "-N",
-        f"Cirrus_{input_file.name}",
+        f"{get_config().progname}_{input_file.name}",
         *user_args,
         "--",
         "/usr/bin/bash",
@@ -310,7 +272,16 @@ def main() -> None:
 
     input_file = Path(args.input).expanduser().resolve()
     if not input_file.exists():
-        sys.exit(f"Cirrus input file '{input_file}' does not exit!")
+        sys.exit(
+            f"{get_config().display_name} input file '{input_file}' does not exist!"
+        )
+
+    if input_file.is_dir():
+        outdir_default = input_file
+        case = input_file.name
+    else:
+        outdir_default = input_file.parent
+        case = input_file.stem
 
     if args.interactive:
         args.queue = "local"
@@ -330,32 +301,41 @@ def main() -> None:
             "Must specify -q/--queue when attempting to run on multiple machines with -m/--num-machines"
         )
 
-    cirrus_args = args.cirrus_args or ""
+    program_args = args.program_args or ""
     if args.version:
-        cirrus_args = "-v " + args.version + " " + cirrus_args
-
-    install_path = get_install_path()
-
-    progname = "cirrus"
+        program_args = "-v " + args.version + " " + program_args
 
     num_tasks = args.num_machines * args.num_tasks_per_machine
 
     if args.output_directory:
         outdir = Path(args.output_directory).expanduser()
     else:
-        outdir = Path(args.input).expanduser().parent
+        outdir = outdir_default
 
-    script = SCRIPT.format(
-        root=install_path,
-        workdir=input_file.parent,
+    common_fmt = dict(
+        executable=get_config().executable_path,
+        progname=get_config().progname,
+        program_args=program_args,
         input_file=input_file,
-        case=input_file.stem,
-        progname=progname,
-        mpi_args=args.mpi_args or "",
-        cirrus_args=cirrus_args,
-        num_tasks=f"-np {num_tasks}" if num_tasks is not None else "",
+        case=case,
         outdir=outdir.resolve(),
-        telemetry=args.telemetry,
+        telemetry=args.telemetry or "",
+    )
+
+    launch_command = get_config().launch_template.format(**common_fmt)
+
+    pre_command_section = get_config().pre_command.format(**common_fmt) + "\n\n"
+
+    script = (
+        _SCRIPT_HEADER.format(**common_fmt)
+        + pre_command_section
+        + (_SCRIPT_MPI_SETUP + _SCRIPT_LAUNCH_MPI).format(
+            **common_fmt,
+            launch_command=launch_command,
+            mpirun=get_config().mpirun_path,
+            num_tasks=f"-np {num_tasks}",
+            mpi_args=args.mpi_args or "",
+        )
     )
 
     logger.info(
@@ -366,7 +346,8 @@ def main() -> None:
             "args.num_tasks_per_machine": args.num_tasks_per_machine,
             "args.num_machines": args.num_machines,
             "args.queue": args.queue,
-            "rootdir": str(install_path),
+            "executable": get_config().executable_path,
+            "mpirun": get_config().mpirun_path,
             "num_tasks": num_tasks,
             "bsub": HAVE_BSUB,
             "qsub": HAVE_QSUB,
@@ -383,7 +364,3 @@ def main() -> None:
         run_qsub(script, args, input_file)
     else:
         sys.exit("No supported job scheduler detected on this machine")
-
-
-if __name__ == "__main__":
-    main()
