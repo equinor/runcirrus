@@ -29,3 +29,4 @@ dev = [
 
 [tool.uv]
 package = true
+exclude-newer = "1 week"
