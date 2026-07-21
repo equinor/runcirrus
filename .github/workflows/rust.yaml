@@ -1,0 +1,37 @@
+name: Rust application
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  KARSKSAL_ROOT: /opt/karsk/program
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Clippy
+      run: cargo clippy
+    - name: Formatting
+      run: cargo fmt --check
+    - name: Build binaries
+      run: cargo build --release
+    - name: Test
+      run: cargo test --release
