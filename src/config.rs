@@ -1,14 +1,21 @@
 use std::env;
 use std::path::PathBuf;
+pub const SETUP_COMMAND: Option<&str> = option_env!("RUNKARSK_SETUP_COMMAND");
 
 pub fn karsksal_root() -> PathBuf {
     env::var_os("KARSKSAL_ROOT")
-        .unwrap_or(env!("KARSKSAL_ROOT").into())
+        .or(option_env!("KARSKSAL_ROOT").map(|s| s.into()))
+        .expect("environment variable KARSKSAL_ROOT to be set")
         .into()
 }
 
 pub fn wrapper_path() -> PathBuf {
-    karsksal_root().join("bin/runcirrus")
+    karsksal_root().join("bin").join("cirrus")
+}
+
+pub fn runner_path() -> PathBuf {
+    let path = env::current_exe().expect("Couldn't obtain this program's path");
+    path.parent().expect("Couldn't get parent").join("runner")
 }
 
 /// Environment variable for "machinefile"/"hostfile" - a list of hosts with one

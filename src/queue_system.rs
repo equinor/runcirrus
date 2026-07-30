@@ -1,12 +1,14 @@
-/// Parsing of Args to get the queue system has become a bit too complicated.
+// Parsing of Args to get the queue system has become a bit too complicated.
 /// Over time it has become a kind of a linear state machine. This file
 /// hopefully makes it make a bit more sense and a bit less buggy.
 use crate::config;
-use crate::util::exit;
+use crate::exit;
 
+use crate::queues::{LocalScheduler, Scheduler};
 use std::env::var_os;
 use std::fs::read_to_string;
 use std::path::Path;
+use std::process::Command;
 use std::thread::available_parallelism;
 
 fn count_lines(path: impl AsRef<Path>) -> usize {
@@ -135,6 +137,32 @@ impl QueueSystem {
             None => QueueSystem::Local {
                 num_tasks_per_machine: step2.num_tasks_per_machine,
             },
+        }
+    }
+
+    pub fn num_tasks(&self) -> usize {
+        match self {
+            QueueSystem::Local {
+                num_tasks_per_machine,
+            } => *num_tasks_per_machine,
+            QueueSystem::Cluster {
+                num_tasks_per_machine,
+                num_machines,
+                ..
+            } => *num_tasks_per_machine * *num_machines,
+        }
+    }
+
+    pub async fn exec(&self, command: Command) {
+        match self {
+            QueueSystem::Local { .. } => {
+                let s = LocalScheduler::new();
+                s.exec(command).await.unwrap();
+            }
+
+            QueueSystem::Cluster { .. } => {
+                unimplemented!();
+            }
         }
     }
 }
