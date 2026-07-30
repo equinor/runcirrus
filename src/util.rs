@@ -1,10 +1,16 @@
+use std::cell::Cell;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
 
+thread_local! {
+    pub static BIN_NAME: Cell<&'static str> = const { Cell::new("runkarsk") };
+}
+
+#[macro_export]
 macro_rules! exit {
     (code=$code:expr, $($arg:tt)*) => {{
-        std::eprint!("{}: ", env!("CARGO_BIN_NAME"));
+        std::eprint!("{}: ", $crate::util::BIN_NAME.get());
         std::eprintln!($($arg)*);
         std::process::exit($code);
     }};
@@ -28,5 +34,3 @@ pub fn have_linux_module(name: &str) -> bool {
 
     false
 }
-
-pub(crate) use exit;

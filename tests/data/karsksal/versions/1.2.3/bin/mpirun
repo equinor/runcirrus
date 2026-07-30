@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+# Instead of using $(nproc) we pretend we have 37 cores
+nproc=unset
+machinefile=unset
+
+while true; do
+  case "${1}" in
+  -np)
+  nproc=${2}
+  shift 2
+  ;;
+  -machinefile)
+  machinefile=${2}
+  shift 2
+  ;;
+  *)
+  break
+  ;;
+  esac
+done
+
+echo "Fake MPIRun with np=${nproc}, machinefile=${machinefile}"
+exec "$@"

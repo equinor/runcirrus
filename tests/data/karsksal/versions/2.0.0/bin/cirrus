@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+echo "Fake Cirrus 2.0.0 with args: $*"

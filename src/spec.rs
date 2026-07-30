@@ -1,68 +1,96 @@
-use std::ffi::OsString;
-use std::path::PathBuf;
-use std::process::Stdio;
-use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncReadExt, AsyncWriteExt};
-use tokio::process::Command;
+use crate::exit;
+use crate::{config, util};
+use std::error::Error;
+use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use clap::Parser;
+const DEFAULT_VERSION: &str = "stable";
 
-#[derive(Parser)]
-#[command(name = env!("CARGO_BIN_NAME"))]
-pub struct Args {
-    outdir: PathBuf,
-    case: String,
-
-    num_tasks: i32,
-
-    mpirun_path: PathBuf,
-    mpi_args: Vec<OsString>,
-    args: Vec<OsString>,
+pub struct Spec {
+    prefix: PathBuf,
+    input: PathBuf,
+    case_name: String,
+    case_dir: PathBuf,
+    program_args: Vec<OsString>,
 }
 
-async fn write_from_process<R, W1, W2>(mut reader: R, mut w1: W1, mut w2: W2) -> std::io::Result<()>
-where R: AsyncRead + Unpin,
-      W1: AsyncWrite + Unpin,
-W2: AsyncWrite + Unpin,
-{
-    let mut buf = [0u8; 8192];
+impl Spec {
+    pub fn new(input: PathBuf, version: Option<String>) -> Result<Self, Box<dyn Error>> {
+        let version = version.unwrap_or(DEFAULT_VERSION.to_string());
+        let (case_dir, case_name) = split_input_into_dir_and_case(&input);
+        let prefix = fs::canonicalize(config::karsksal_root().join("versions").join(&version))?;
 
-    loop {
-        let n = reader.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        w1.write_all(&buf[..n]).await?;
-        w2.write_all(&buf[..n]).await?;
+        Ok(Self {
+            prefix,
+            input,
+            case_dir,
+            case_name,
+            program_args: Vec::new(),
+        })
     }
-    w1.flush().await?;
-    w2.flush().await?;
 
-    Ok(())
+    pub fn get_input(&self) -> &Path {
+        self.input.as_path()
+    }
+
+    /// Get the prefix for the given version's environment
+    pub fn get_prefix(&self) -> &Path {
+        self.prefix.as_path()
+    }
+
+    /// The name of the input file without the file extension, or the name of the directory
+    pub fn get_case_name(&self) -> &str {
+        &self.case_name
+    }
+
+    /// The path to the directory containing the input file
+    pub fn get_case_dir(&self) -> &Path {
+        &self.case_dir
+    }
+
+    pub fn get_bin<S: AsRef<Path>>(&self, name: S) -> PathBuf {
+        self.prefix.join("bin").join(name)
+    }
+
+    pub fn arg<S: AsRef<OsStr>>(&mut self, arg: S) -> &mut Self {
+        self.program_args.push(arg.as_ref().to_os_string());
+        self
+    }
+
+    pub fn args<S: AsRef<OsStr>>(&mut self, args: &[S]) -> &mut Self {
+        for arg in args {
+            self.program_args.push(arg.as_ref().to_os_string());
+        }
+        self
+    }
+
+    pub fn get_args(&self) -> &Vec<OsString> {
+        &self.program_args
+    }
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> std::io::Result<()> {
-    let args = Args::parse();
+fn split_input_into_dir_and_case(input_file: &Path) -> (PathBuf, String) {
+    let name = |s: Option<&OsStr>| {
+        s.and_then(OsStr::to_str)
+            .expect("Couldn't get file name from path")
+            .to_string()
+    };
 
-    let mut child = Command::new(args.mpirun_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("It should work");
+    if input_file.is_dir() {
+        (input_file.to_path_buf(), name(input_file.file_name()))
+    } else {
+        (
+            input_file.parent().unwrap().to_owned(),
+            name(input_file.file_stem()),
+        )
+    }
+}
 
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-
-    let stdout_file = File::create("stdout.log").await?;
-    let stderr_file = File::create("stderr.log").await?;
-
-    let stdout_task = tokio::task::spawn(write_from_process(stdout, stdout_file, tokio::io::stdout()));
-    let stderr_task = tokio::task::spawn(write_from_process(stderr, stderr_file, tokio::io::stderr()));
-
-    child.wait().await?;
-    stdout_task.await??;
-    stderr_task.await??;
-
-    Ok(())
+pub fn get_install_root(version: String) -> PathBuf {
+    let versions_dir = config::karsksal_root().join("versions");
+    let path = versions_dir.join(&version);
+    fs::canonicalize(path).unwrap_or_else(|err| {
+        exit!("Error finding version '{}'\nLooked in '{}'\nUse `{} --print-versions` to see a list of valid versions\n{}", version, versions_dir.display(), util::BIN_NAME.get(), err);
+    })
 }
